@@ -15,18 +15,19 @@ static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
+    info!("Hello Secondary World!");
     let p = embassy_stm32::init_secondary(&SHARED_DATA);
-    info!("Hello World!");
+    info!("Again Hello World!");
 
-    let mut led = Output::new(p.PK7, Level::High, Speed::Low);
+    let mut led_blue = Output::new(p.PK7, Level::High, Speed::Low);
 
     loop {
         info!("blue high");
-        led.set_high();
+        led_blue.set_high();
         Timer::after_millis(250).await;
 
         info!("blue low");
-        led.set_low();
+        led_blue.set_low();
         Timer::after_millis(250).await;
     }
 }
