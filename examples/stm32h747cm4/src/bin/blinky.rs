@@ -16,7 +16,7 @@ static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     info!("Hello Secondary World!");
-    let p = embassy_stm32::init_secondary(&SHARED_DATA);
+    let p = embassy_stm32::try_init_secondary(&SHARED_DATA).expect("Could not init secondary core");
     info!("Again Hello World!");
 
     let mut led_blue = Output::new(p.PK7, Level::High, Speed::Low);
