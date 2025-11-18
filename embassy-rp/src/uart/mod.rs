@@ -22,7 +22,7 @@ mod buffered;
 pub use buffered::{BufferedInterruptHandler, BufferedUart, BufferedUartRx, BufferedUartTx};
 
 mod dma_circular;
-pub use dma_circular::{DmaCircularState, DmaCircularUartRx};
+pub use dma_circular::{DmaCircularInterruptHandler, DmaCircularState, DmaCircularUartRx};
 
 /// Word length.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

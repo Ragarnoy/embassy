@@ -9,12 +9,12 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
 use embassy_rp::peripherals::UART0;
-use embassy_rp::uart::{Config, DmaCircularUartRx, InterruptHandler};
+use embassy_rp::uart::{Config, DmaCircularInterruptHandler, DmaCircularUartRx};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
-    UART0_IRQ => InterruptHandler<UART0>;
+    UART0_IRQ => DmaCircularInterruptHandler<UART0>;
 });
 
 #[embassy_executor::main]
