@@ -21,6 +21,9 @@ use crate::{RegExt, interrupt, pac, peripherals};
 mod buffered;
 pub use buffered::{BufferedInterruptHandler, BufferedUart, BufferedUartRx, BufferedUartTx};
 
+mod dma_circular;
+pub use dma_circular::{DmaCircularState, DmaCircularUartRx};
+
 /// Word length.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DataBits {
@@ -1314,6 +1317,8 @@ trait SealedInstance {
     fn buffered_state() -> &'static buffered::State;
 
     fn dma_state() -> &'static DmaState;
+
+    fn dma_circular_state() -> &'static dma_circular::DmaCircularState;
 }
 
 /// UART mode.
@@ -1365,6 +1370,11 @@ macro_rules! impl_instance {
                     rx_err_waker: AtomicWaker::new(),
                     rx_errs: AtomicU16::new(0),
                 };
+                &STATE
+            }
+
+            fn dma_circular_state() -> &'static dma_circular::DmaCircularState {
+                static STATE: dma_circular::DmaCircularState = dma_circular::DmaCircularState::new();
                 &STATE
             }
         }
