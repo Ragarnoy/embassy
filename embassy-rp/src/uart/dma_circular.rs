@@ -5,11 +5,33 @@
 //!
 //! # Features
 //! - Zero-copy continuous reception via DMA
-//! - RP2350: Single DMA channel with TRIGGER_SELF mode
-//! - RP2040: Dual DMA channel chaining
+//! - RP2350: Single DMA channel with TRIGGER_SELF mode (mode field in TRANS_COUNT)
+//! - RP2040: Dual DMA channel chaining (limited by no mode field in TRANS_COUNT)
 //! - Automatic buffer wrapping via ring addressing
 //! - Idle line detection for low-latency wakeup
 //! - UART error handling (overrun, break, parity, framing)
+//!
+//! # Hardware Differences
+//!
+//! ## RP2350 TRIGGER_SELF Mode
+//! The RP2350 DMA has a MODE field in TRANS_COUNT register. When set to mode 1 (TRIGGER_SELF),
+//! the DMA channel automatically re-triggers itself when the transfer completes. This is
+//! documented in RP2350 forums and the RP2350 datasheet section on DMA TRANS_COUNT modes.
+//!
+//! Combined with ring/wrap addressing, this creates a true single-channel circular buffer
+//! where the DMA continuously reads from UART and wraps within the buffer automatically.
+//!
+//! ## RP2040 Dual-Channel Chaining
+//! The RP2040 lacks the MODE field, so circular operation requires two channels:
+//! - Channel A: Transfers UART data to buffer with ring/wrap
+//! - Channel B: Triggered by Channel A completion, reconfigures Channel A
+//!
+//! This requires careful setup but achieves the same circular behavior.
+//!
+//! # References
+//! - RP2350 forum discussion: https://forums.raspberrypi.com/viewtopic.php?t=375820
+//! - RP2350 datasheet: DMA TRANS_COUNT register, MODE field
+//! - Ring buffer discussions: https://forums.raspberrypi.com/viewtopic.php?t=349150
 
 use core::future::poll_fn;
 use core::marker::PhantomData;
@@ -75,8 +97,8 @@ pub struct DmaCircularUartRx<'d, M: Mode> {
     rx_dma: Peri<'d, AnyChannel>,
     buffer: &'d mut [u8],
     buffer_len: usize,
-    #[cfg(not(feature = "_rp235x"))]
-    control_dma: Option<Peri<'d, AnyChannel>>,
+    #[cfg(feature = "rp2040")]
+    control_dma: Peri<'d, AnyChannel>,
     phantom: PhantomData<M>,
 }
 
@@ -84,16 +106,19 @@ impl<'d> DmaCircularUartRx<'d, Async> {
     /// Create a new circular buffered UART RX
     ///
     /// On RP2350, this uses the TRIGGER_SELF mode for true single-channel circular operation.
-    /// On RP2040, this requires two DMA channels (one for data, one for control).
+    /// The `control_dma` parameter is ignored on RP2350 but required for API compatibility.
+    ///
+    /// On RP2040, both DMA channels are required for dual-channel chaining operation.
     ///
     /// The buffer should be a power of 2 size (e.g., 256, 512, 1024) for optimal performance
     /// with the ring addressing feature.
-    #[cfg(feature = "_rp235x")]
     pub fn new_circular<T: Instance>(
         _uart: Peri<'d, T>,
         rx: Peri<'d, impl RxPin<T>>,
         _irq: impl Binding<T::Interrupt, DmaCircularInterruptHandler<T>>,
         rx_dma: Peri<'d, impl Channel>,
+        #[cfg(feature = "rp2040")] control_dma: Peri<'d, impl Channel>,
+        #[cfg(feature = "_rp235x")] _control_dma: Peri<'d, impl Channel>,
         buffer: &'d mut [u8],
         config: Config,
     ) -> Self {
@@ -115,10 +140,23 @@ impl<'d> DmaCircularUartRx<'d, Async> {
 
         let rx_dma = rx_dma.into();
 
-        // Configure DMA for circular operation with TRIGGER_SELF mode
-        unsafe {
-            Self::start_dma_circular(&rx_dma, info, buffer);
+        #[cfg(feature = "_rp235x")]
+        {
+            // RP2350: Use TRIGGER_SELF mode with single DMA channel
+            unsafe {
+                Self::start_dma_circular(&rx_dma, info, buffer);
+            }
         }
+
+        #[cfg(feature = "rp2040")]
+        let control_dma_channel = {
+            // RP2040: Use dual-channel chaining
+            let control_ch = control_dma.into();
+            unsafe {
+                Self::start_dma_chained(&rx_dma, &control_ch, info, buffer);
+            }
+            control_ch
+        };
 
         // Enable UART interrupts for idle line detection and error handling
         info.regs.uartimsc().write_set(|w| {
@@ -134,60 +172,8 @@ impl<'d> DmaCircularUartRx<'d, Async> {
             rx_dma,
             buffer,
             buffer_len,
-            phantom: PhantomData,
-        }
-    }
-
-    /// Create a new circular buffered UART RX (RP2040 version with dual channels)
-    #[cfg(feature = "rp2040")]
-    pub fn new_circular<T: Instance>(
-        _uart: Peri<'d, T>,
-        rx: Peri<'d, impl RxPin<T>>,
-        _irq: impl Binding<T::Interrupt, DmaCircularInterruptHandler<T>>,
-        rx_dma: Peri<'d, impl Channel>,
-        control_dma: Peri<'d, impl Channel>,
-        buffer: &'d mut [u8],
-        config: Config,
-    ) -> Self {
-        Uart::<Async>::init(T::info(), None, Some(rx.into()), None, None, config);
-
-        let info = T::info();
-        let state = T::dma_circular_state();
-        let buffer_len = buffer.len();
-
-        // Validate buffer size is power of 2
-        assert!(
-            buffer_len.is_power_of_two() && buffer_len <= 32768,
-            "Buffer size must be power of 2 and <= 32768"
-        );
-
-        // Reset state
-        state.read_pos.store(0, Ordering::Relaxed);
-        state.rx_errors.store(0, Ordering::Relaxed);
-
-        let rx_dma = rx_dma.into();
-        let control_dma = control_dma.into();
-
-        // Configure DMA for circular operation with dual-channel chaining
-        unsafe {
-            Self::start_dma_chained(&rx_dma, &control_dma, info, buffer);
-        }
-
-        // Enable UART interrupts for idle line detection and error handling
-        info.regs.uartimsc().write_set(|w| {
-            w.set_rtim(true); // RX timeout (idle line)
-        });
-
-        info.interrupt.unpend();
-        unsafe { info.interrupt.enable() };
-
-        Self {
-            info,
-            state,
-            rx_dma,
-            buffer,
-            buffer_len,
-            control_dma: Some(control_dma),
+            #[cfg(feature = "rp2040")]
+            control_dma: control_dma_channel,
             phantom: PhantomData,
         }
     }

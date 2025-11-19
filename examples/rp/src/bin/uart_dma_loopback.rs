@@ -1,10 +1,11 @@
-//! DMA Circular buffered UART loopback test for RP2350
+//! DMA Circular buffered UART receiver test
 //!
-//! This example demonstrates the DMA circular buffer UART implementation
-//! with a loopback test. Connect TX (PIN_0) to RX (PIN_1) to test.
+//! This example demonstrates the DMA circular buffer UART implementation.
+//! Send data to PIN_1 (UART RX) to see it received and printed.
 //!
-//! On RP2350: Uses 1 DMA channel with TRIGGER_SELF mode
-//! On RP2040: Uses 2 DMA channels with chaining
+//! Implementation details:
+//! - RP2350: Uses 1 DMA channel (control_dma ignored, TRIGGER_SELF mode)
+//! - RP2040: Uses 2 DMA channels (data + control chaining)
 
 #![no_std]
 #![no_main]
