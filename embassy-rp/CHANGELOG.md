@@ -64,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the `fixed` dependency. Clock dividers are now plain integers holding the fixed-point bits:
   - PWM: `pwm::Config::divider` is renamed to `divider_x16`, a `u16` with 8 integer and 4 fractional bits (the divider multiplied by 16).
   - PIO: `pio::Config::clock_divider`, `StateMachine::set_clock_divider`, `calculate_pio_clock_divider` and `calculate_pio_clock_divider_value` are renamed to `clock_divider_x256`, `set_clock_divider_x256`, `calculate_pio_clock_divider_x256` and `calculate_pio_clock_divider_value_x256`, and use a `u32` with 16 integer and 8 fractional bits (the divider multiplied by 256).
+- UART: add `RingBufferedUartRx`, a continuous DMA RX driver using two chained DMA channels (a data channel plus a control channel that reloads it from a segment pointer table). No per-byte interrupt and no CPU involvement between buffers.
+
 
 ## 0.10.0 - 2026-03-10
 - Add AON Timer driver for RP2350 with configurable clock sources and alarm wake modes
