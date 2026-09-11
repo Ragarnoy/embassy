@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PIO: add `Config::set_input_sync_bypass` to declare input synchronizer bypass pins; the bypass is applied inside `StateMachine::set_config` once `GPIOBASE` is established, fixing bypass for pins >= 32 on RP2350B.
 - breaking: Remove `<T: Instance>` from `Spi`, `I2c` and `I2cSlave` ([#4900](https://github.com/embassy-rs/embassy/pull/4900))
 - Add set_baudrate() to BufferedUartTx.
+- UART: add `RingBufferedUartRx`, a continuous DMA RX driver using two chained DMA channels (a data channel plus a control channel that reloads it from a segment pointer table). No per-byte interrupt and no CPU involvement between buffers.
 
 
 ## 0.10.0 - 2026-03-10
