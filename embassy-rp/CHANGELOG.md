@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - breaking: Remove `<T: Instance>` from `Spi`, `I2c` and `I2cSlave` ([#4900](https://github.com/embassy-rs/embassy/pull/4900))
 - Add set_baudrate() to BufferedUartTx.
 - UART: add `RingBufferedUartRx`, a continuous DMA RX driver using two chained DMA channels (a data channel plus a control channel that reloads it from a segment pointer table). No per-byte interrupt and no CPU involvement between buffers.
+- PIO UART: add `PioRingBufferedUartRx`, the same continuous DMA ring driven from a PIO state machine, plus `PioUartIdleProgram`. A second state machine detects an idle line and wakes a blocked reader at the end of a frame, which the PL011 cannot do behind DMA because its receive-timeout interrupt never fires once `RXDMAE` is set.
 
 
 ## 0.10.0 - 2026-03-10
