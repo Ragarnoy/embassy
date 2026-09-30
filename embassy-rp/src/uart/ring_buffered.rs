@@ -20,7 +20,7 @@
 //! receive-timeout interrupt is useless behind DMA: with `RXDMAE` set the RX DREQ asserts
 //! whenever the FIFO is non-empty, so the DMA drains it long before the 32-bit-period idle
 //! condition can hold, and the interrupt never fires. A reader cannot be woken at a frame
-//! boundary — only at a segment boundary.
+//! boundary — only at a segment boundary. Use the PIO front end if you need that.
 //!
 //! # Limitations
 //!
