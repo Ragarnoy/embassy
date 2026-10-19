@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - UART: add `RingBufferedUartTx`, a DMA TX driver that sends from a circular pool one contiguous run at a time, restarting the channel from its completion interrupt. No per-byte interrupt. Bind the channel to `dma_ring_tx::TxInterruptHandler`.
 - UART: add `RingBufferedUart`, a `RingBufferedUartRx` and `RingBufferedUartTx` on one UART, with `split` and `split_ref`.
 - PIO UART: add `PioRingBufferedUartRx`, the same continuous DMA ring driven from a PIO state machine, plus `PioUartIdleProgram`. A second state machine detects an idle line and wakes a blocked reader at the end of a frame, which the PL011 cannot do behind DMA because its receive-timeout interrupt never fires once `RXDMAE` is set.
+- PIO UART: add `PioRingBufferedUartTx`, the same run-based DMA transmit ring feeding a PIO state machine's TX FIFO.
 
 
 ## 0.10.0 - 2026-03-10
