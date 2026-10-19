@@ -693,3 +693,135 @@ impl<PIO: Instance, const SM: usize> Write for PioRingBufferedUartTx<'_, PIO, SM
         Ok(())
     }
 }
+
+/// Full-duplex PIO UART with a ring-buffered DMA receiver and transmitter.
+///
+/// A [`PioRingBufferedUartRx`] and a [`PioRingBufferedUartTx`] set up together, like
+/// [`PioUart`] is for the unbuffered halves. Use [`split`](Self::split) to hand the halves to
+/// separate tasks, or [`split_ref`](Self::split_ref) to borrow them.
+///
+/// Costs three state machines (transmit, receive and idle detect), three DMA channels (two for
+/// receive, one for transmit) and the instruction memory of the three programs, which it loads
+/// itself. The transmit channel must be bound to
+/// [`TxInterruptHandler`].
+pub struct PioRingBufferedUart<'d, PIO: Instance, const TX_SM: usize, const RX_SM: usize, const IDLE_SM: usize> {
+    tx: PioRingBufferedUartTx<'d, PIO, TX_SM>,
+    rx: PioRingBufferedUartRx<'d, PIO, RX_SM, IDLE_SM>,
+}
+
+impl<'d, PIO: Instance, const TX_SM: usize, const RX_SM: usize, const IDLE_SM: usize>
+    PioRingBufferedUart<'d, PIO, TX_SM, RX_SM, IDLE_SM>
+{
+    /// Configure a full-duplex ring-buffered PIO UART.
+    ///
+    /// `idle_irq` must be the [`Irq`] whose index equals `IDLE_SM`. See
+    /// [`PioRingBufferedUartRx::new`] and [`PioRingBufferedUartTx::new`] for the buffer
+    /// requirements: `rx_buffer` must be a non-zero multiple of 4 bytes and `state` must outlive
+    /// the driver, `tx_buffer` can be any non-empty length.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new<RxDma: ChannelInstance, CtrlDma: ChannelInstance, TxDma: ChannelInstance>(
+        baud: u32,
+        common: &mut Common<'d, PIO>,
+        sm_tx: StateMachine<'d, PIO, TX_SM>,
+        sm_rx: StateMachine<'d, PIO, RX_SM>,
+        sm_idle: StateMachine<'d, PIO, IDLE_SM>,
+        idle_irq: Irq<'d, PIO, IDLE_SM>,
+        irq_flags: IrqFlags<'d, PIO>,
+        tx_pin: Peri<'d, impl PioPin>,
+        rx_pin: Peri<'d, impl PioPin>,
+        rx_dma: Peri<'d, RxDma>,
+        ctrl_dma: Peri<'d, CtrlDma>,
+        tx_dma: Peri<'d, TxDma>,
+        irq: impl Binding<RxDma::Interrupt, crate::dma::InterruptHandler<RxDma>>
+        + Binding<TxDma::Interrupt, TxInterruptHandler<TxDma>>
+        + 'd,
+        state: &'d State,
+        rx_buffer: &'d mut [u8],
+        tx_buffer: &'d mut [u8],
+    ) -> Self {
+        let tx_program = PioUartTxProgram::new(common);
+        let rx_program = PioUartRxProgram::new(common);
+        let idle_program = PioUartIdleProgram::new(common);
+        Self {
+            tx: PioRingBufferedUartTx::new(baud, common, sm_tx, tx_pin, &tx_program, tx_dma, irq, tx_buffer),
+            rx: PioRingBufferedUartRx::new(
+                baud,
+                common,
+                sm_rx,
+                sm_idle,
+                idle_irq,
+                irq_flags,
+                rx_pin,
+                &rx_program,
+                &idle_program,
+                rx_dma,
+                ctrl_dma,
+                irq,
+                state,
+                rx_buffer,
+            ),
+        }
+    }
+
+    /// Split into independent transmitter and receiver halves.
+    pub fn split(
+        self,
+    ) -> (
+        PioRingBufferedUartTx<'d, PIO, TX_SM>,
+        PioRingBufferedUartRx<'d, PIO, RX_SM, IDLE_SM>,
+    ) {
+        (self.tx, self.rx)
+    }
+
+    /// Borrow the transmitter and receiver halves.
+    pub fn split_ref(
+        &mut self,
+    ) -> (
+        &mut PioRingBufferedUartTx<'d, PIO, TX_SM>,
+        &mut PioRingBufferedUartRx<'d, PIO, RX_SM, IDLE_SM>,
+    ) {
+        (&mut self.tx, &mut self.rx)
+    }
+
+    /// See [`PioRingBufferedUartRx::read`].
+    pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+        self.rx.read(buf).await
+    }
+
+    /// See [`PioRingBufferedUartTx::write`].
+    pub async fn write(&mut self, buf: &[u8]) -> usize {
+        self.tx.write(buf).await
+    }
+
+    /// See [`PioRingBufferedUartTx::flush`].
+    pub async fn flush(&mut self) {
+        self.tx.flush().await
+    }
+}
+
+impl<PIO: Instance, const TX_SM: usize, const RX_SM: usize, const IDLE_SM: usize> ErrorType
+    for PioRingBufferedUart<'_, PIO, TX_SM, RX_SM, IDLE_SM>
+{
+    type Error = Error;
+}
+
+impl<PIO: Instance, const TX_SM: usize, const RX_SM: usize, const IDLE_SM: usize> Read
+    for PioRingBufferedUart<'_, PIO, TX_SM, RX_SM, IDLE_SM>
+{
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+        PioRingBufferedUart::read(self, buf).await
+    }
+}
+
+impl<PIO: Instance, const TX_SM: usize, const RX_SM: usize, const IDLE_SM: usize> Write
+    for PioRingBufferedUart<'_, PIO, TX_SM, RX_SM, IDLE_SM>
+{
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
+        Ok(PioRingBufferedUart::write(self, buf).await)
+    }
+
+    async fn flush(&mut self) -> Result<(), Error> {
+        PioRingBufferedUart::flush(self).await;
+        Ok(())
+    }
+}
