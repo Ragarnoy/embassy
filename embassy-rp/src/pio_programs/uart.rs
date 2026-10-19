@@ -10,6 +10,7 @@ use embedded_io_async::{ErrorType, Read, Write};
 use crate::Peri;
 use crate::dma::ChannelInstance;
 use crate::dma_ring::{RxRing, State};
+use crate::dma_ring_tx::{TxInterruptHandler, TxRing};
 use crate::gpio::Level;
 use crate::interrupt::typelevel::Binding;
 use crate::pio::{
@@ -561,5 +562,134 @@ impl<'d, PIO: Instance, const SM: usize, const SM_IDLE: usize> embedded_io_async
 {
     fn read_ready(&mut self) -> Result<bool, Self::Error> {
         Self::read_ready(self)
+    }
+}
+
+/// PIO backed UART transmitter with a run-based DMA ring.
+///
+/// Writes are copied into a circular pool and sent by one DMA channel straight into the state
+/// machine's TX FIFO, with no CPU involvement per byte. It uses the same program and state
+/// machine configuration as [`PioUartTx`]; see [`crate::dma_ring_tx`] for how the DMA is driven
+/// and why the pool can be any length.
+///
+/// The DMA channel must be bound to [`TxInterruptHandler`],
+/// not to [`dma::InterruptHandler`](crate::dma::InterruptHandler).
+pub struct PioRingBufferedUartTx<'d, PIO: Instance, const SM: usize> {
+    sm_tx: StateMachine<'d, PIO, SM>,
+    ring: TxRing<'d>,
+}
+
+impl<'d, PIO: Instance, const SM: usize> PioRingBufferedUartTx<'d, PIO, SM> {
+    /// Configure a state machine to use the loaded TX program, driven by DMA.
+    ///
+    /// `tx_buffer` is the pool; any non-empty length works.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new<TxDma: ChannelInstance>(
+        baud: u32,
+        common: &mut Common<'d, PIO>,
+        mut sm_tx: StateMachine<'d, PIO, SM>,
+        tx_pin: Peri<'d, impl PioPin>,
+        program: &PioUartTxProgram<'d, PIO>,
+        tx_dma: Peri<'d, TxDma>,
+        irq: impl Binding<TxDma::Interrupt, TxInterruptHandler<TxDma>> + 'd,
+        tx_buffer: &'d mut [u8],
+    ) -> Self {
+        let tx_pin = common.make_pio_pin(tx_pin);
+
+        let mut cfg = Config::default();
+        cfg.set_out_pins(&[&tx_pin]);
+        cfg.use_program(&program.prg, &[&tx_pin]);
+        cfg.shift_out.auto_fill = false;
+        cfg.shift_out.direction = ShiftDirection::Right;
+        cfg.fifo_join = FifoJoin::TxOnly;
+        cfg.clock_divider_x256 = calculate_pio_clock_divider_x256(8 * baud);
+        sm_tx.set_config(&cfg);
+        sm_tx.set_pins(Level::High, &[&tx_pin]);
+        sm_tx.set_pin_dirs(PioDirection::Out, &[&tx_pin]);
+        sm_tx.set_enable(true);
+
+        // The program pulls a word and shifts out its low 8 bits. A byte-wide write to the FIFO
+        // register is replicated across the word, so the data is in bits 7:0 either way.
+        let ring = TxRing::new(
+            tx_dma,
+            irq,
+            sm_tx.tx().fifo_address() as *mut u8,
+            sm_tx.tx().dreq(),
+            tx_buffer,
+        );
+
+        Self { sm_tx, ring }
+    }
+
+    /// Queue as much of `buf` as fits and return how much that was, without waiting.
+    pub fn try_write(&mut self, buf: &[u8]) -> usize {
+        self.ring.try_write(buf)
+    }
+
+    /// Queue bytes from `buf`, waiting until at least one fits.
+    ///
+    /// Returns the number of bytes queued, which is never zero unless `buf` is empty. Use
+    /// [`embedded_io_async::Write::write_all`] to queue all of `buf`, and
+    /// [`flush`](Self::flush) to wait for the bytes to leave the wire.
+    pub async fn write(&mut self, buf: &[u8]) -> usize {
+        if buf.is_empty() {
+            return 0;
+        }
+        poll_fn(|cx| {
+            // Register before checking, so a run completing in between still wakes us.
+            self.ring.register_waker(cx.waker());
+            match self.ring.try_write(buf) {
+                0 => Poll::Pending,
+                n => Poll::Ready(n),
+            }
+        })
+        .await
+    }
+
+    /// Wait until every queued byte has been fully transmitted on the wire.
+    pub async fn flush(&mut self) {
+        poll_fn(|cx| {
+            self.ring.register_waker(cx.waker());
+            if self.ring.pending() != 0 {
+                Poll::Pending
+            } else {
+                Poll::Ready(())
+            }
+        })
+        .await;
+        // The DMA is done. There's no PIO interrupt for "TX FIFO empty" or "stalled", so poll,
+        // the same way `PioUartTx::flush` does.
+        while !self.sm_tx.tx().empty() {
+            embassy_futures::yield_now().await;
+        }
+        let _ = self.sm_tx.tx().stalled();
+        while !self.sm_tx.tx().stalled() {
+            embassy_futures::yield_now().await;
+        }
+    }
+
+    /// Bytes that could be queued right now.
+    pub fn free_space(&mut self) -> usize {
+        self.ring.free()
+    }
+
+    /// Bytes queued that the DMA has not finished reading.
+    pub fn pending(&mut self) -> usize {
+        self.ring.pending()
+    }
+}
+
+impl<PIO: Instance, const SM: usize> ErrorType for PioRingBufferedUartTx<'_, PIO, SM> {
+    type Error = Infallible;
+}
+
+impl<PIO: Instance, const SM: usize> Write for PioRingBufferedUartTx<'_, PIO, SM> {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Infallible> {
+        Ok(PioRingBufferedUartTx::write(self, buf).await)
+    }
+
+    async fn flush(&mut self) -> Result<(), Infallible> {
+        PioRingBufferedUartTx::flush(self).await;
+        Ok(())
     }
 }
