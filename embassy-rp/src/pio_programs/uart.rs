@@ -475,6 +475,11 @@ impl<'d, PIO: Instance, const SM: usize, const SM_IDLE: usize> PioRingBufferedUa
     ///
     /// Returns as soon as either the line goes idle or the DMA finishes a segment, whichever
     /// comes first. Returns the number of bytes read, which is never zero unless `buf` is empty.
+    ///
+    /// The read takes whatever is buffered when the task next runs, so it can return only part
+    /// of a frame: any wakeup that finds data in the ring (not just the idle flag) ends the
+    /// wait. Idle detection bounds how long a read can wait for a frame's tail; it does not
+    /// delimit frames. Callers that need a whole frame must keep reading until they have it.
     pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         if buf.is_empty() {
             return Ok(0);
