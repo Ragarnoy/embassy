@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - PIO: `pio::Config::clock_divider`, `StateMachine::set_clock_divider`, `calculate_pio_clock_divider` and `calculate_pio_clock_divider_value` are renamed to `clock_divider_x256`, `set_clock_divider_x256`, `calculate_pio_clock_divider_x256` and `calculate_pio_clock_divider_value_x256`, and use a `u32` with 16 integer and 8 fractional bits (the divider multiplied by 256).
 - UART: add `RingBufferedUartRx`, a continuous DMA RX driver using two chained DMA channels (a data channel plus a control channel that reloads it from a segment pointer table). No per-byte interrupt and no CPU involvement between buffers.
 - UART: add `RingBufferedUartTx`, a DMA TX driver that sends from a circular pool one contiguous run at a time, restarting the channel from its completion interrupt. No per-byte interrupt. Bind the channel to `dma_ring_tx::TxInterruptHandler`.
+- UART: add `RingBufferedUart`, a `RingBufferedUartRx` and `RingBufferedUartTx` on one UART, with `split` and `split_ref`.
 
 
 ## 0.10.0 - 2026-03-10
